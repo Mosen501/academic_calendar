@@ -1,0 +1,787 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Interactive School Calendar</title>
+
+  <style>
+  /* =============================================================
+     THEME (macOS Calendar–inspired dark palette)
+  ============================================================= */
+  :root{
+    --day-col-gap: 1px;   /* screen column gap */
+    --day-row-gap: 1px;   /* screen row gap   */
+    --bg:#111113;         /* window background (very dark neutral) */
+    --panel:#1c1c1e;      /* primary surface */
+    --panel2:#2c2c2e;     /* grouped/inset */
+    --ink:#e5e7eb;        /* primary text on dark */
+    --muted:#9ca3af;      /* secondary text on dark */
+    --accent:#0a84ff;     /* macOS blue in dark */
+    --border:#2a2a2e;     /* hairlines on dark */
+    --weekend:#94a3b8;    /* weekend/secondary */
+    --apple-red:#ff453a;  /* system red (dark) */
+  }
+
+  /* =============================================================
+     BASE
+  ============================================================= */
+  * { box-sizing: border-box }
+  html { font-size: clamp(14px, 0.9vw + 10px, 16px); }
+  body{
+    margin: 0;
+    font: 13px/1.5 system-ui, -apple-system, Segoe UI, Roboto, Inter, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--ink);
+  }
+  [hidden]{ display:none !important; } /* universal hidden */
+
+  header{
+    padding: 20px 16px;
+    background: linear-gradient(180deg, rgba(56,189,248,.12), rgba(56,189,248,0));
+    border-bottom: 1px solid var(--border);
+  }
+  h1{ margin: 0 0 6px; font-size: 22px; letter-spacing: .2px; }
+  p.sub{ margin: 0; color: var(--muted); }
+  main{ max-width: 1200px; margin: 0 auto; padding: 18px 14px 40px; }
+
+  /* Screen-reader only helper */
+  .sr-only{
+    position:absolute !important;
+    width:1px; height:1px;
+    margin:-1px; padding:0; border:0;
+    clip:rect(0 0 0 0); clip-path: inset(50%); overflow:hidden; white-space:nowrap;
+  }
+
+  /* =============================================================
+     BUILDER + FORM CONTROLS
+  ============================================================= */
+  .card{ background:var(--panel); border:1px solid var(--border); border-radius:14px; padding:14px; margin-bottom:16px }
+  .grid{ display:grid; gap:10px }
+  @media (min-width: 860px){ .grid.cols-3{ grid-template-columns: 1fr 1fr 1fr } }
+
+  label{ font-weight:600; font-size:13px; color:var(--muted) }
+  input[type="text"], input[type="color"], select{
+    width:100%; padding:8px 10px; border-radius:10px; border:1px solid var(--border); background:var(--panel2); color:var(--ink); font:inherit
+  }
+  input[type="text"].date-mask{ font-variant-numeric: tabular-nums; }
+
+  .input-hint{ color:var(--muted); font-size:12px; margin-top:1px }
+
+  .btn{ display:inline-flex; align-items:center; gap:6px; border:1px solid var(--border); background:transparent; color:var(--ink); padding:8px 12px; border-radius:10px; cursor:pointer; font-weight:700 }
+  .btn:hover{ border-color:var(--accent); box-shadow:0 0 0 2px rgba(56,189,248,.15) inset }
+  .btn.small{ padding:6px 10px; font-weight:600 }
+  .danger{ color:#f87171 }  /* for Reset */
+  .hint{ color:var(--muted); font-size:12px }
+
+  /* Quick Help */
+  details.help{ margin-top:8px }
+  details.help summary{ cursor:pointer; color:var(--muted); font-weight:700 }
+  details.help ul{ margin:6px 0 0; padding-left:18px; color:var(--muted); font-size:16px }
+
+  /* Legend */
+  .legend{ display:flex; flex-wrap:wrap; gap:8px; margin:10px 0 0 }
+  .key{ display:inline-flex; align-items:center; gap:8px; padding:6px 10px; border:1px solid var(--border); border-radius:999px; background:rgba(148,163,184,.06); color:var(--muted); font-size:13px }
+  .sw{ width:14px; height:10px; border-radius:3px; display:inline-block; border:1px solid var(--border) }
+
+  /* =============================================================
+     CALENDAR LAYOUT
+  ============================================================= */
+  #output{ width: 290mm; height: 190mm; margin: 12px auto; transform-origin: top left; }
+  #calendar{ display:grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .5mm; }
+  .month{ min-width: 0; width: 100%; box-sizing: border-box; }
+  .month-grid{
+    display: grid;
+    column-gap: var(--day-col-gap, 1px);
+    row-gap: var(--day-row-gap, 1px);
+    grid-template-columns: repeat(7, var(--cell-w, 56px));
+    justify-content: start;
+    width: 100%;
+    box-sizing: border-box;
+  }
+  .month h3{ margin:0; padding:10px 12px; font-size:clamp(16px,1.2vw,18px); letter-spacing:.1px; border-bottom:1px solid var(--border) }
+
+  .dow,.day{ position:relative; display:flex; flex-direction:column; align-items:center; justify-content:flex-start; padding-bottom:.1px; }
+  .dow{ background:rgba(148,163,184,.06); color:var(--muted); font-weight:700 }
+  .day.pad{ background:rgba(148,163,184,.03) }
+
+  /* Day numbers */
+  .num{
+    font-weight:700; font-size:1em; opacity:.95;
+    display:inline-flex; align-items:center; justify-content:center;
+    width:1.5em; height:1.5em; line-height:1.5em;
+    margin:2px auto 6px; border-radius:999px; transition:transform .12s ease; outline: 0;
+  }
+  .day:focus .num, .day:focus-visible .num{ box-shadow:0 0 0 2px rgba(10,132,255,.35) }
+  .day:hover .num{ transform:scale(1.05) }
+  .today .num{ background:var(--apple-red); color:#fff; opacity:1; box-shadow:0 0 0 1px rgba(255,255,255,.14), 0 0 0 2px rgba(255,59,48,.25) inset }
+
+  .weekend{ color:var(--weekend) }
+  .out{ opacity:.35 }
+
+  /* Event bars */
+  .badges{ position:absolute; left:9px; right:9px; bottom:5px; display:flex; flex-direction: column; align-items: center; gap:3px; }
+  .ev{ height:2px; width:100%; border-radius:2px; border:none; box-shadow:none; }
+  .day.one-event{ background: var(--tint); } /* single-event tint */
+
+  /* Range highlight */
+  .day.in-range{ background: rgba(10,132,255,.16); }
+  .day.range-edge .num{ box-shadow: 0 0 0 2px rgba(10,132,255,.65) inset; }
+
+  /* Non-adjacent picks (Ctrl/Cmd+click) */
+  .day.picked{ background: rgba(10,132,255,.18); outline: 2px solid rgba(10,132,255,.55); outline-offset: -2px; }
+
+  /* =============================================================
+     QUICK ADD MODAL
+  ============================================================= */
+  #quickModal.no-print{ position: fixed; inset: 0; display:flex; align-items:center; justify-content:center; background: rgba(0,0,0,.45); z-index: 9999; }
+  #quickModal .modal-card{ background: var(--panel); color: var(--ink); border:1px solid var(--border); border-radius: 12px; width: min(420px, 92vw); padding: 14px; box-shadow: 0 10px 30px rgba(0,0,0,.3); }
+  #quickModal .modal-card h4{ margin: 0 0 10px; font-size: 16px }
+  #quickModal .row-2{ display:grid; grid-template-columns: 1fr 1fr; gap:8px; }
+  #quickModal .actions{ display:flex; gap:8px; margin-top:10px; justify-content:flex-end; align-items:center }
+
+  /* =============================================================
+     DAY CONTEXT MENU
+  ============================================================= */
+  #dayMenu{ position: fixed; inset: 0; z-index: 9998; background: rgba(0,0,0,.15); }
+  #dayMenu .menu{ position: absolute; min-width: 240px; max-width: 90vw; background: var(--panel); color: var(--ink); border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 10px 30px rgba(0,0,0,.35); padding: 8px; }
+  #dayMenu h5{ margin: 2px 6px 8px; font-size: 13px; color: var(--muted) }
+  #dayMenu .item{ display:flex; align-items:center; justify-content:space-between; gap:8px; padding:6px 8px; border-radius:8px; }
+  #dayMenu .item:hover{ background: rgba(148,163,184,.08); }
+  #dayMenu .sw{ width:12px; height:10px; border-radius:3px; border:1px solid var(--border); }
+  #dayMenu .del{ border:1px solid var(--border); background:transparent; color:#f87171; padding:4px 8px; border-radius:8px; cursor:pointer; font-weight:600; }
+  #dayMenu .close{ float:right; border:0; background:transparent; color:var(--muted); cursor:pointer; }
+
+  /* =============================================================
+     PRINT (A4 LANDSCAPE)
+  ============================================================= */
+  @media print{
+    :root{
+      --bg:#f6f7f8; --panel:#ffffff; --panel2:#f4f5f7; --ink:#1f2937; --muted:#6b7280;
+      --accent:#007aff; --border:#e5e7eb; --weekend:#64748b; --apple-red:#ff3b30;
+      --day-col-gap: .6mm; --day-row-gap: .2mm;
+    }
+    @page{ size: A4 landscape; margin: .1mm; }
+    *{ -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    header, footer, nav, #builder, .no-print{ display:none !important; }
+    #output{ width: 290mm; height: 190mm; margin: 0; transform: none; box-shadow: none; background: var(--bg); }
+    #calendar{ display:grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .5mm; }
+    .month{ break-inside: avoid; background: var(--panel); }
+    .month-grid{ display:grid; column-gap: var(--day-col-gap); row-gap: var(--day-row-gap); grid-template-columns: repeat(7, var(--cell-w, 56px)); justify-content: start; }
+    .month h3{ padding:4px 6px; font-size:11px; }
+    .num{ margin: .5mm auto 1mm; }
+    .day{ padding-bottom:0; }
+    .badges{ bottom:2px; gap:2px; }
+    #legendPrint{ display:flex; break-after: avoid; }
+  }
+  </style>
+</head>
+
+<body>
+  <header>
+    <h1>Interactive School Calendar</h1>
+    <p class="sub">Enter term dates (DD-MM-YYYY) and add events. Then print.</p>
+  </header>
+
+  <!-- Quick Add Event -->
+  <div id="quickModal" class="no-print" hidden>
+    <div class="modal-card" role="dialog" aria-modal="true" aria-label="Add event">
+      <h4>Add event</h4>
+      <label>Title
+        <input id="qmLabel" type="text" placeholder="e.g., Break" style="width:100%">
+      </label>
+      <div class="row-2" style="margin-top:8px">
+        <label>Start
+          <input id="qmStart" class="date-mask" inputmode="numeric" placeholder="DD-MM-YYYY">
+          <div class="input-hint">Tip: enter multiple dates separated by commas to add many single‑day events.</div>
+        </label>
+        <label>End
+          <input id="qmEnd" class="date-mask" inputmode="numeric" placeholder="DD-MM-YYYY">
+        </label>
+      </div>
+      <div class="actions">
+        <input id="qmColor" type="color" value="#3b82f6" title="Color">
+        <button id="qmCancel" class="btn small">Cancel</button>
+        <button id="qmSave" class="btn">Add</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Day context menu -->
+  <div id="dayMenu" class="no-print" hidden>
+    <div class="menu" role="dialog" aria-modal="true" aria-label="Day menu">
+      <button class="close" title="Close">✕</button>
+      <h5 id="dmTitle">Events on …</h5>
+      <div id="dmList"></div>
+    </div>
+  </div>
+
+  <main>
+    <section id="builder" class="card" aria-labelledby="builderTitle">
+      <h2 id="builderTitle" class="sr-only">Calendar Builder</h2>
+
+      <div class="grid cols-3">
+        <div>
+          <label for="termStart">School start (DD-MM-YYYY)</label>
+          <input id="termStart" class="date-mask" type="text" placeholder="DD-MM-YYYY" inputmode="numeric" />
+        </div>
+        <div>
+          <label for="termEnd">School end (DD-MM-YYYY)</label>
+          <input id="termEnd" class="date-mask" type="text" placeholder="DD-MM-YYYY" inputmode="numeric" />
+        </div>
+        <div>
+          <label for="weekend">Weekend days</label>
+          <select id="weekend" aria-label="Weekend days">
+            <option value="5,6" selected>Fri & Sat</option>
+            <option value="0,6">Sun & Sat</option>
+            <option value="6">Sat only</option>
+            <option value="0">Sun only</option>
+          </select>
+        </div>
+      </div>
+
+      <details class="help">
+        <summary>Quick help</summary>
+        <ul>
+          <li>Set <b>School start</b> & <b>School end</b> in <code>DD-MM-YYYY</code> (slashes OK).</li>
+          <li>Pick your <b>Weekend days</b>.</li>
+          <li><b>Add events</b>: drag for a range; double-click a day; <b>Ctrl/⌘+click</b> multiple, then release.</li>
+          <li><b>Right-click</b> a day to view/remove events.</li>
+          <li><b>Autosave</b> in this browser; <b>Reset</b> clears everything.</li>
+          <li><b>Print PDF</b> → A4 landscape.</li>
+        </ul>
+      </details>
+
+      <div style="display:flex; gap:8px; margin-top:10px">
+        <button class="btn" id="print">Print PDF</button>
+        <button class="btn danger" id="reset" type="button" aria-label="Reset calendar">Reset</button>
+      </div>
+    </section>
+
+    <section id="output" class="card" style="height: 850px;">
+      <div id="legendPrint" class="legend" aria-hidden="true"></div>
+      <div id="calendar" aria-live="polite"></div>
+    </section>
+  </main>
+
+  <script>
+  "use strict";
+  /* =====================================================================
+     INTERACTIVE SCHOOL CALENDAR — Cleaned & clarified
+     Sections:
+       1) Constants & Utilities
+       2) State & Models
+       3) DOM Cache
+       4) Rendering (calendar, legend, sizing)
+       5) Quick-Add Modal
+       6) Persistence
+       7) Input Masking & Reactive Updates
+       8) Events (delegated handlers + global helpers)
+       9) Boot
+  ===================================================================== */
+
+  /* ---------------------------------------------------------------------
+     1) CONSTANTS & UTILITIES
+  --------------------------------------------------------------------- */
+  const $  = s => document.querySelector(s);
+  const $$ = s => Array.from(document.querySelectorAll(s));
+
+  const MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+  const DOW    = ["S","M","T","W","T","F","S"]; // visuals
+  const FULL_DOW = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+  const EV_COLOR_RE = /^#[0-9a-f]{6}$/i;
+  const STORAGE_KEY = 'schoolCalendar.v2';
+
+  const DMY = /^(\d{1,2})[-\/](\d{1,2})[-\/](\d{4})$/; // precompiled
+
+  const d0 = (y,m,d)=> new Date(y,m,d);
+  const strip = d => d0(d.getFullYear(), d.getMonth(), d.getDate());
+  const betweenInc = (d,a,b)=>{ const x=strip(d), s=strip(a), e=strip(b); return x>=s && x<=e; };
+
+  function toKey(dt){ const y=dt.getFullYear(), m=String(dt.getMonth()+1).padStart(2,'0'), d=String(dt.getDate()).padStart(2,'0'); return `${y}-${m}-${d}`; }
+  function fromKey(key){ const [y,m,d] = key.split('-').map(Number); return d0(y, m-1, d); }
+
+  function parseDMY(s){
+    const m = String(s || '').trim().match(DMY);
+    if(!m) return null;
+    const [ , dd, mm, yyyy ] = m;
+    const dt = d0(+yyyy, +mm-1, +dd);
+    return (dt.getFullYear()==+yyyy && dt.getMonth()==+mm-1 && dt.getDate()==+dd) ? dt : null;
+  }
+
+  const palette = ['#ef4444','#f59e0b','#10b981','#3b82f6','#8b5cf6','#ec4899','#14b8a6','#eab308','#f97316','#22c55e','#06b6d4','#a855f7'];
+  let colorIdx = 0;
+  const nextColor = ()=> palette[(colorIdx++) % palette.length];
+
+  const hexToTint = (hex, a=0.16) => {
+    const m = hex.replace('#','');
+    const r=parseInt(m.slice(0,2),16), g=parseInt(m.slice(2,4),16), b=parseInt(m.slice(4,6),16);
+    return `rgba(${r},${g},${b},${a})`;
+  };
+
+  function indexEvents(termStart, termEnd, events){
+    const map = new Map();
+    for (const ev of events){
+      let cur = strip(ev.start), end = strip(ev.end);
+      if (end < termStart || cur > termEnd) continue;
+      if (cur < termStart) cur = strip(termStart);
+      if (end > termEnd)   end = strip(termEnd);
+      for(let d=new Date(cur); d<=end; d.setDate(d.getDate()+1)){
+        const k = toKey(d);
+        const arr = map.get(k) || [];
+        arr.push(ev);
+        map.set(k, arr);
+      }
+    }
+    return map;
+  }
+
+  function fmtDMY(d){ const dd=String(d.getDate()).padStart(2,'0'), mm=String(d.getMonth()+1).padStart(2,'0'), yyyy=d.getFullYear(); return `${dd}-${mm}-${yyyy}`; }
+
+  /* ---------------------------------------------------------------------
+     2) STATE & MODELS
+  --------------------------------------------------------------------- */
+  class RangeEvent{
+    constructor(label, start, end, color){ this.label=label; this.start=start; this.end=end; this.color=color||nextColor(); }
+    matches(date){ return betweenInc(date, this.start, this.end); }
+  }
+
+  const state = { events: [] };
+  function addEvent(label, start, end, color){ state.events.push(new RangeEvent(label, start, end, color)); }
+  function eventTouchesDate(ev, date){ return betweenInc(date, ev.start, ev.end); }
+
+  /* ---------------------------------------------------------------------
+     3) DOM CACHE
+  --------------------------------------------------------------------- */
+  const el = {
+    termStart: $('#termStart'),
+    termEnd:   $('#termEnd'),
+    weekend:   $('#weekend'),
+    legendPrint: $('#legendPrint'),
+    calendar:  $('#calendar'),
+    print:     $('#print'),
+    reset:     $('#reset'),
+  };
+
+  /* ---------------------------------------------------------------------
+     4) RENDERING (calendar, legend, responsive sizing)
+  --------------------------------------------------------------------- */
+  function renderLegend(events, target){
+    target.innerHTML='';
+    const seen = new Set();
+    for (const ev of events){
+      const key = `${ev.label}|${ev.color}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const k = document.createElement('span'); k.className='key';
+      const sw = document.createElement('span'); sw.className='sw'; sw.style.background=ev.color;
+      const lbl= document.createElement('span'); lbl.textContent=' ' + ev.label;
+      k.append(sw,lbl); target.appendChild(k);
+    }
+  }
+
+  function fitMonthsCellWidth(){
+    const months = document.querySelectorAll('#calendar .month');
+    months.forEach(month => {
+      const grid = month.querySelector('.month-grid'); if (!grid) return;
+      month.style.setProperty('--cell-w', '1px'); grid.getBoundingClientRect();
+      let widest = 0; grid.querySelectorAll('.num').forEach(n => widest = Math.max(widest, n.scrollWidth));
+      const paddedText = Math.ceil(widest) + 16; // ~8px each side
+      const monthRect = month.getBoundingClientRect();
+      const mcs = getComputedStyle(month);
+      const inner = monthRect.width - parseFloat(mcs.paddingLeft||'0') - parseFloat(mcs.paddingRight||'0');
+      const gcs = getComputedStyle(grid);
+      const gap = parseFloat(gcs.columnGap || gcs.gap || '0') || 0;
+      const maxCell = Math.floor((inner - (gap*6)) / 7);
+      const MIN = 32; const cell = Math.min(maxCell, Math.max(MIN, paddedText));
+      month.style.setProperty('--cell-w', `${cell}px`);
+    });
+  }
+
+  function applyPickedStyles(){
+    $$('#calendar .day').forEach(d=>{
+      if (!d.dataset.date) return;
+      d.classList.toggle('picked', pickedDates.has(d.dataset.date));
+    });
+  }
+  function clearPicked(){ pickedDates.clear(); $$('#calendar .day').forEach(d=> d.classList.remove('picked')); }
+
+  function clearSelectionVisual(){ $$('#calendar .day').forEach(d => d.classList.remove('in-range','range-edge')); }
+  function setSelectionVisual(a, b){
+    clearSelectionVisual();
+    if(!a || !b) return;
+    const s = a < b ? a : b; const e = a < b ? b : a;
+    $$('#calendar .day').forEach(d => {
+      const k = d.dataset.date; if(!k) return;
+      const dt = fromKey(k);
+      if (dt >= s && dt <= e){
+        d.classList.add('in-range');
+        if (+dt === +s || +dt === +e) d.classList.add('range-edge');
+      }
+    });
+  }
+
+  function renderCalendar(container, termStart, termEnd, events, weekendDays=[5,6]){
+    container.innerHTML='';
+    if(!termStart || !termEnd) return;
+
+    const today = strip(new Date());
+    const first = d0(termStart.getFullYear(), termStart.getMonth(), 1);
+    const last  = d0(termEnd.getFullYear(), termEnd.getMonth()+1, 0);
+    const eventIndex = indexEvents(termStart, termEnd, events);
+
+    const frag = document.createDocumentFragment();
+    const iter = new Date(first);
+    while (iter <= last){
+      frag.appendChild(renderMonth(iter.getFullYear(), iter.getMonth()));
+      iter.setMonth(iter.getMonth()+1, 1);
+    }
+    container.appendChild(frag);
+    fitMonthsCellWidth();
+    applyPickedStyles();
+
+    function renderMonth(year, monthIdx){
+      const wrap = document.createElement('section'); wrap.className='month';
+      const h = document.createElement('h3'); h.textContent = `${MONTHS[monthIdx]} ${year}`; wrap.appendChild(h);
+      const grid = document.createElement('div'); grid.className='month-grid'; grid.setAttribute('role','grid'); grid.setAttribute('aria-label', `${MONTHS[monthIdx]} ${year}`);
+
+      DOW.forEach((d,i)=>{ const elh=document.createElement('div'); elh.className='dow'; elh.setAttribute('role','columnheader'); elh.setAttribute('aria-colindex', String(i+1)); elh.textContent=d; elh.setAttribute('aria-label', FULL_DOW[i]); grid.appendChild(elh); });
+
+      const firstDay = d0(year, monthIdx, 1);
+      for(let i=0;i<firstDay.getDay();i++){ const pad = document.createElement('div'); pad.className='day pad'; pad.setAttribute('role','gridcell'); grid.appendChild(pad); }
+
+      const daysInMonth = d0(year, monthIdx+1, 0).getDate();
+      for(let day=1; day<=daysInMonth; day++){
+        const date = d0(year, monthIdx, day);
+        grid.appendChild(dayCell(date));
+      }
+
+      const total = firstDay.getDay() + daysInMonth;
+      for(let i=0, t=(7 - (total % 7)) % 7; i<t; i++){ const pad = document.createElement('div'); pad.className='day pad'; pad.setAttribute('role','gridcell'); grid.appendChild(pad); }
+
+      wrap.appendChild(grid);
+      return wrap;
+    }
+
+    function dayCell(date){
+      const div = document.createElement('div'); div.className='day'; div.setAttribute('role','gridcell'); div.setAttribute('tabindex','0');
+      const k = toKey(date); div.dataset.date = k;
+
+      if(!betweenInc(date, termStart, termEnd)) div.classList.add('out');
+      if(weekendDays.includes(date.getDay())) div.classList.add('weekend');
+
+      const num = document.createElement('div'); num.className='num'; num.textContent = date.getDate(); div.appendChild(num);
+
+      if (+strip(date) === +today){ div.classList.add('today'); div.setAttribute('aria-current','date'); }
+
+      const todaysEvents = eventIndex.get(k) || [];
+      if (todaysEvents.length===1 && !div.classList.contains('today')){
+        div.classList.add('one-event'); div.style.setProperty('--tint', hexToTint(todaysEvents[0].color));
+      }
+      if (todaysEvents.length){
+        const badges = document.createElement('div'); badges.className='badges';
+        todaysEvents.slice(0,3).forEach(ev=>{ const b=document.createElement('span'); b.className='ev'; b.style.background=ev.color; badges.appendChild(b); });
+        div.appendChild(badges);
+        const dateLabel = `${MONTHS[date.getMonth()]} ${date.getDate()}, ${date.getFullYear()}`;
+        div.setAttribute('aria-label', `${dateLabel}. ${todaysEvents.length} event${todaysEvents.length>1?'s':''}.`);
+      } else {
+        const dateLabel = `${MONTHS[date.getMonth()]} ${date.getDate()}, ${date.getFullYear()}`;
+        div.setAttribute('aria-label', dateLabel);
+      }
+      return div;
+    }
+  }
+
+  function rerender(){
+    // Save first so partial inputs persist
+    saveState();
+
+    const ts = parseDMY(el.termStart.value);
+    const te = parseDMY(el.termEnd.value);
+    if (!ts || !te || te < ts) return;
+
+    const weekend = el.weekend.value.split(',').filter(Boolean).map(Number);
+
+    renderLegend(state.events, el.legendPrint);
+    renderCalendar(el.calendar, ts, te, state.events, weekend);
+  }
+
+  /* ---------------------------------------------------------------------
+     5) QUICK-ADD MODAL
+  --------------------------------------------------------------------- */
+  const qm = { wrap:null, label:null, start:null, end:null, color:null, save:null, cancel:null };
+  function initQuickModalRefs(){
+    if (qm.wrap) return;
+    qm.wrap = document.getElementById('quickModal');
+    qm.label = document.getElementById('qmLabel');
+    qm.start = document.getElementById('qmStart');
+    qm.end   = document.getElementById('qmEnd');
+    qm.color = document.getElementById('qmColor');
+    qm.save  = document.getElementById('qmSave');
+    qm.cancel= document.getElementById('qmCancel');
+  }
+  function openQuickModal(sDate, eDate){
+    initQuickModalRefs();
+    qm.label.value = '';
+    qm.start.value = fmtDMY(sDate);
+    qm.end.value   = fmtDMY(eDate);
+    qm.color.value = nextColor();
+    qm.wrap.hidden = false;
+    setTimeout(()=> qm.label.focus(), 0);
+  }
+  function closeQuickModal(){
+    if (!qm.wrap) return;
+    qm.wrap.hidden = true;
+    clearSelectionVisual();
+    selectState.active = false;
+    selectState.moved  = false;
+    selectState.start = selectState.end = null;
+    clearPicked();
+  }
+
+  function openModalForPickedDates(){
+    if (!pickedDates.size) return;
+    if (qm.wrap && !qm.wrap.hidden) return;
+    const keys = Array.from(pickedDates).sort();
+    openQuickModal(new Date(), new Date());
+    qm.start.value = keys.map(k => fmtDMY(fromKey(k))).join(', ');
+    qm.end.value   = '';
+  }
+
+  // Wire up modal buttons (once)
+  initQuickModalRefs();
+  qm.cancel.addEventListener('click', (e)=>{ e.preventDefault(); closeQuickModal(); });
+  qm.save.addEventListener('click', (e)=>{
+    e.preventDefault();
+    const label = (qm.label.value || '').trim() || 'Event';
+    let colorVal = qm.color.value; if (!EV_COLOR_RE.test(colorVal || '')) colorVal = nextColor();
+    const startRaw = (qm.start.value || '').trim();
+    const endRaw   = (qm.end.value || '').trim();
+
+    const csv = startRaw.split(/[,;]+/).map(s=>s.trim()).filter(Boolean);
+    if (csv.length > 1 && !endRaw){
+      let added = 0;
+      csv.forEach(p=>{ const d=parseDMY(p); if(d){ addEvent(label, d, d, colorVal); added++; }});
+      if (!added){ alert('Please enter valid dates like 12-10-2025.'); return; }
+      rerender(); closeQuickModal(); return;
+    }
+    const s = parseDMY(startRaw); const ed = parseDMY(endRaw || startRaw);
+    if (!s || !ed || ed < s){ alert('Please enter valid start/end.'); return; }
+    addEvent(label, s, ed, colorVal); rerender(); closeQuickModal();
+  });
+
+  /* ---------------------------------------------------------------------
+     6) PERSISTENCE (localStorage v2)
+  --------------------------------------------------------------------- */
+  function saveState(){
+    const data = {
+      termStart: el.termStart.value,
+      termEnd:   el.termEnd.value,
+      weekend:   el.weekend.value,
+      events: state.events.map(ev => ({ label:ev.label, start:fmtDMY(ev.start), end:fmtDMY(ev.end), color:ev.color }))
+    };
+    try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(data)); }catch(e){}
+  }
+  function loadState(){
+    try{
+      const raw = localStorage.getItem(STORAGE_KEY); if(!raw) return false;
+      const data = JSON.parse(raw) || {};
+      if (data.termStart) el.termStart.value = data.termStart;
+      if (data.termEnd)   el.termEnd.value   = data.termEnd;
+      if (data.weekend)   el.weekend.value   = data.weekend;
+      state.events = Array.isArray(data.events) ? data.events.map(e=>{
+        const s=parseDMY(e.start), ed=parseDMY(e.end);
+        return (s && ed) ? new RangeEvent(e.label, s, ed, e.color) : null;
+      }).filter(Boolean) : [];
+      return true;
+    }catch(e){ return false; }
+  }
+
+  /* ---------------------------------------------------------------------
+     7) INPUT MASKING & REACTIVE UPDATES
+  --------------------------------------------------------------------- */
+  document.addEventListener('input', e => {
+    const t = e.target;
+    if (t.classList.contains('date-mask')) maskDateInput(t);
+    if (t.matches('#termStart,#termEnd,#weekend')) {
+      if (t === el.termStart || t === el.termEnd) t.setCustomValidity('');
+      rerender();
+    }
+  });
+
+  function maskDateInput(target){
+    const parts = String(target.value).split(/[,;]+/);
+    const masked = parts.map(p => {
+      const digits = p.replace(/\D+/g,'').slice(0,8);
+      if (!digits) return '';
+      if (digits.length <= 2) return digits;
+      if (digits.length <= 4) return digits.slice(0,2)+'-'+digits.slice(2);
+      return digits.slice(0,2)+'-'+digits.slice(2,4)+'-'+digits.slice(4);
+    }).filter(Boolean);
+    target.value = masked.join(', ');
+    const pos = target.value.length;
+    target.setSelectionRange && target.setSelectionRange(pos, pos);
+  }
+
+  /* ---------------------------------------------------------------------
+     8) EVENTS (delegated handlers + global helpers)
+  --------------------------------------------------------------------- */
+  const selectState = { active:false, start:null, end:null, moved:false };
+  const pickedDates = new Set(); // YYYY-MM-DD
+  let suppressAdd = false;
+  let suppressTimer = null;
+
+  // Helper to find a day cell within calendar
+  const asDayCell = t => t.closest('.day[data-date]');
+
+  // Selection start (drag to select range)
+  el.calendar.addEventListener('mousedown', (e)=>{
+    if (e.button !== 0) return;               // left only
+    if (e.ctrlKey || e.metaKey) return;       // not when multi-picking
+    const cell = asDayCell(e.target); if (!cell) return;
+    e.preventDefault();
+    const d = fromKey(cell.dataset.date);
+    selectState.active = true; selectState.moved = false;
+    selectState.start = d; selectState.end = d;
+    setSelectionVisual(d, d);
+  });
+
+  // Dragging selection
+  el.calendar.addEventListener('mouseover', (e)=>{
+    if (!selectState.active) return;
+    const cell = asDayCell(e.target); if (!cell) return;
+    const d = fromKey(cell.dataset.date);
+    if (+d !== +selectState.end){
+      selectState.moved = true;
+      selectState.end = d;
+      setSelectionVisual(selectState.start, selectState.end);
+    }
+  });
+
+  // Selection end (global to catch mouseup outside calendar)
+  window.addEventListener('mouseup', ()=>{
+    if (!selectState.active) return;
+    const a = selectState.start, b = selectState.end;
+    const s = a < b ? a : b, e2 = a < b ? b : a;
+    selectState.active = false;
+    if (selectState.moved && +s !== +e2 && !suppressAdd){ openQuickModal(s, e2); }
+    selectState.moved = false;
+    clearSelectionVisual();
+  });
+
+  // Double-click to add single-day event
+  el.calendar.addEventListener('dblclick', (e)=>{
+    if (e.ctrlKey || e.metaKey) return; // ignore while modifier held
+    const cell = asDayCell(e.target); if (!cell || suppressAdd) return;
+    const d = fromKey(cell.dataset.date);
+    openQuickModal(d, d);
+  });
+
+  // Ctrl/Cmd click to multi-pick non-adjacent dates
+  el.calendar.addEventListener('click', (e)=>{
+    if (!(e.ctrlKey || e.metaKey)) return;
+    const cell = asDayCell(e.target); if (!cell) return;
+    e.preventDefault();
+    const k = cell.dataset.date;
+    if (pickedDates.has(k)) pickedDates.delete(k); else pickedDates.add(k);
+    applyPickedStyles();
+    suppressAdd = true; clearTimeout(suppressTimer);
+    suppressTimer = setTimeout(()=>{ suppressAdd = false; }, 350);
+  });
+
+  // Right-click (context menu) for day actions
+  el.calendar.addEventListener('contextmenu', (e)=>{
+    const cell = asDayCell(e.target); if (!cell) return;
+    e.preventDefault();
+    clearSelectionVisual(); clearPicked();
+    const date = fromKey(cell.dataset.date);
+    const dayMenu = document.getElementById('dayMenu');
+    const dmCard  = dayMenu.querySelector('.menu');
+    const dmList  = document.getElementById('dmList');
+    const dmTitle = document.getElementById('dmTitle');
+    const matches = state.events.filter(ev => eventTouchesDate(ev, date));
+    dmList.innerHTML = '';
+    if (!matches.length){
+      const p = document.createElement('div'); p.style.padding='8px'; p.style.color='var(--muted)';
+      p.textContent = 'No events on this date.'; dmList.appendChild(p);
+    } else {
+      matches.forEach(ev => {
+        const item = document.createElement('div'); item.className='item';
+        const left = document.createElement('div'); left.style.display='flex'; left.style.gap='8px'; left.style.alignItems='center';
+        const sw = document.createElement('span'); sw.className='sw'; sw.style.background=ev.color;
+        const sTxt = fmtDMY(ev.start), eTxt = fmtDMY(ev.end);
+        const text = document.createElement('span'); text.textContent = `${ev.label} (${sTxt}${eTxt!==sTxt?' → '+eTxt:''})`;
+        left.append(sw, text);
+        const del = document.createElement('button'); del.className='del'; del.textContent='Remove';
+        del.addEventListener('click', ()=>{
+          const i = state.events.indexOf(ev); if (i>-1) state.events.splice(i,1);
+          rerender(); item.remove(); if (!dmList.children.length) dayMenu.hidden = true;
+        });
+        item.append(left, del); dmList.appendChild(item);
+      });
+    }
+    dmTitle.textContent = `Events on ${MONTHS[date.getMonth()]} ${date.getDate()}, ${date.getFullYear()}`;
+    dayMenu.hidden = false;
+    const r = dmCard.getBoundingClientRect();
+    let x = e.clientX, y = e.clientY;
+    if (x + r.width  > window.innerWidth)  x = window.innerWidth  - r.width  - 8;
+    if (y + r.height > window.innerHeight) y = window.innerHeight - r.height - 8;
+    dmCard.style.left = x + 'px'; dmCard.style.top  = y + 'px';
+  });
+  document.querySelector('#dayMenu .close').addEventListener('click', ()=> document.getElementById('dayMenu').hidden = true);
+
+  // Open modal when Meta/Ctrl released (for picked dates)
+  window.addEventListener('keyup', (e)=>{ if (e.key === 'Meta' || e.key === 'Control') openModalForPickedDates(); });
+
+  // Print
+  el.print.addEventListener('click', ()=> window.print());
+
+  // Reset
+  function resetAll(){
+    if (!confirm('Reset all dates, events, and saved state?')) return;
+
+    // 1) Clear inputs to defaults
+    el.termStart.value = '';
+    el.termEnd.value   = '';
+    el.weekend.value   = '5,6';
+
+    // 2) Clear in-memory events
+    state.events.length = 0;
+
+    // 3) Clear UI selections/overlays
+    clearSelectionVisual();
+    clearPicked();
+    const dayMenu = document.getElementById('dayMenu');
+    if (dayMenu) dayMenu.hidden = true;
+    if (qm?.wrap && !qm.wrap.hidden) closeQuickModal();
+
+    // 4) Clear saved state
+    try { localStorage.removeItem(STORAGE_KEY); } catch(e){}
+
+    // 5) Clear rendered output
+    el.calendar.innerHTML = '';
+    el.legendPrint.innerHTML = '';
+
+    // 6) Focus first field
+    el.termStart.focus();
+  }
+  el.reset.addEventListener('click', resetAll);
+
+  /* ---------------------------------------------------------------------
+     9) BOOT
+  --------------------------------------------------------------------- */
+  (function boot(){
+    loadState();
+    const ts = parseDMY(el.termStart.value);
+    const te = parseDMY(el.termEnd.value);
+    if (ts && te && te >= ts) rerender();
+
+    // Responsive/print sizing
+    window.addEventListener('resize', fitMonthsCellWidth, { passive:true });
+    window.addEventListener('beforeprint', fitMonthsCellWidth);
+    window.addEventListener('afterprint', fitMonthsCellWidth);
+  })();
+
+  </script>
+</body>
+</html>
